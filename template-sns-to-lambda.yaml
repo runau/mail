@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: sns and sqs
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+  InSource:
+    Type: String
+    Default: in-source
+  OutSource:
+    Type: String
+    Default: out-source
+   
+Resources:
+  Topic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      TopicName: !Sub '${InSource}-${Env}'  
+
+  Subscription:
+    Type: AWS::SNS::Subscription
+    Properties: 
+      Endpoint: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${OutSource}-${Env}'
+      Protocol: lambda
+      TopicArn: !Ref Topic
+      RedrivePolicy: 
+        deadLetterTargetArn : !GetAtt DeadQueue.Arn
+
+  LogSubscription:
+    Type: AWS::SNS::Subscription
+    Properties: 
+      Endpoint: !GetAtt LogQueue.Arn
+      Protocol: sqs
+      TopicArn: !Ref Topic
+                
+  DeadQueue:
+    Type: AWS::SQS::Queue
+    Properties: 
+      QueueName: !Sub '${OutSource}-dead-${Env}'
+      VisibilityTimeout: 60
+
+  LogQueue:
+    Type: AWS::SQS::Queue
+    Properties: 
+      QueueName: !Sub '${OutSource}-log-${Env}'
+      VisibilityTimeout: 60
+    
+  QueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: LogQueuePolicy
+        Statement:
+          - Sid: 1
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - sqs:SendMessage
+            Resource: "*"
+            Condition:
+              ArnEquals:
+                aws:SourceArn:
+                  !Ref Topic
+      Queues:
+        - !Ref LogQueue
+        - !Ref DeadQueue
+
+  PermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Sub '${OutSource}-${Env}'
+      Action: 'lambda:InvokeFunction'
+      Principal: 'sns.amazonaws.com'
+      SourceArn: !Ref Topic
